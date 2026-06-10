@@ -80,8 +80,8 @@ def main(argv: list[str] | None = None) -> int:
 
     api_key = read_api_key(args)
     if not args.skip_api_check:
-        models = verify_api_key(api_key, timeout=args.api_timeout)
-        print("NeuroGate API check: OK")
+        models = verify_api_key(api_key, model=args.model, timeout=args.api_timeout)
+        print("NeuroGate Responses API check: OK")
         if models:
             preview = ", ".join(models[:10])
             suffix = "" if len(models) <= 10 else f" (+{len(models) - 10} more)"
@@ -107,7 +107,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--api-key", help="NeuroGate API key. Prefer NEUROGATE_API_KEY for scripts.")
     parser.add_argument("--api-key-stdin", action="store_true", help="Read the API key from stdin.")
     parser.add_argument("--non-interactive", action="store_true", help="Do not prompt for the API key.")
-    parser.add_argument("--skip-api-check", action="store_true", help="Do not call /v1/models.")
+    parser.add_argument("--skip-api-check", action="store_true", help="Do not call /v1/models and /v1/responses.")
     parser.add_argument("--api-timeout", type=int, default=60, help="API check timeout in seconds.")
     parser.add_argument("--code-bin", help="Path or command name for VS Code CLI.")
     parser.add_argument("--install-missing-deps", action="store_true", help="Install missing system dependencies when possible.")
@@ -397,7 +397,7 @@ def read_api_key(args: argparse.Namespace) -> str:
     return api_key
 
 
-def verify_api_key(api_key: str, *, timeout: int) -> list[str]:
+def verify_api_key(api_key: str, *, model: str, timeout: int) -> list[str]:
     request = urllib.request.Request(
         f"{NEUROGATE_BASE_URL}/models",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -422,7 +422,44 @@ def verify_api_key(api_key: str, *, timeout: int) -> list[str]:
                 models.append(item["id"])
     if not models:
         raise RuntimeError("NeuroGate API responded, but no models were found.")
+    verify_responses_api(api_key, model=model, timeout=timeout)
     return sorted(set(models))
+
+
+def verify_responses_api(api_key: str, *, model: str, timeout: int) -> None:
+    body = json.dumps(
+        {
+            "model": model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "ping"}],
+                },
+            ],
+            "max_output_tokens": 16,
+            "stream": True,
+            "store": False,
+        },
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{NEUROGATE_BASE_URL}/responses",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        detail = sanitize_secret(detail, api_key)
+        raise RuntimeError(f"NeuroGate Responses API check failed: HTTP {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        detail = sanitize_secret(str(exc), api_key)
+        raise RuntimeError(f"NeuroGate Responses API check failed: {detail}") from exc
 
 
 def sanitize_secret(text: str, api_key: str) -> str:
@@ -530,20 +567,17 @@ def build_model_info() -> dict[str, Any]:
         "inputPrice": 5,
         "outputPrice": 30,
         "cacheReadsPrice": 0.5,
-        "description": "NeuroGate OpenAI-compatible GPT model.",
+        "description": "NeuroGate GPT model via OpenAI Responses API.",
     }
 
 
 def build_roocode_import(api_key: str, *, model: str) -> dict[str, Any]:
     profile = {
         "id": "neurogate-api",
-        "apiProvider": "openai",
-        "openAiApiKey": api_key,
-        "openAiBaseUrl": NEUROGATE_BASE_URL,
-        "openAiModelId": model,
-        "openAiCustomModelInfo": build_model_info(),
-        "openAiStreamingEnabled": True,
-        "openAiHeaders": {},
+        "apiProvider": "openai-native",
+        "apiModelId": model,
+        "openAiNativeApiKey": api_key,
+        "openAiNativeBaseUrl": NEUROGATE_BASE_URL,
     }
     return {
         "providerProfiles": {
@@ -591,29 +625,46 @@ def merge_kilo_config(existing: dict[str, Any], *, api_key: str, model: str) -> 
     config.setdefault("$schema", "https://app.kilo.ai/config.json")
 
     provider = dict(config.get("provider") or {})
-    openai_compatible = dict(provider.get("openai-compatible") or {})
-    options = dict(openai_compatible.get("options") or {})
+    openai = dict(provider.get("openai") or {})
+    options = dict(openai.get("options") or {})
     options.update({"baseURL": NEUROGATE_BASE_URL, "apiKey": api_key})
-    models = dict(openai_compatible.get("models") or {})
-    models[model] = {"name": model, "reasoning": True}
-    openai_compatible.update(
+    models = dict(openai.get("models") or {})
+    models[model] = {
+        "id": model,
+        "name": model,
+        "prompt": "gpt55",
+        "ai_sdk_provider": "openai",
+        "reasoning": True,
+        "tool_call": True,
+        "limit": {
+            "context": MODEL_CONTEXT_WINDOW,
+            "output": MODEL_MAX_TOKENS,
+        },
+        "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+        },
+    }
+    openai.update(
         {
             "name": PROVIDER_NAME,
-            "npm": "@ai-sdk/openai-compatible",
+            "npm": "@ai-sdk/openai",
             "options": options,
             "models": models,
         },
     )
-    provider["openai-compatible"] = openai_compatible
+    provider["openai"] = openai
     config["provider"] = provider
-    config["model"] = f"openai-compatible/{model}"
+    config["model"] = f"openai/{model}"
+    config["small_model"] = f"openai/{model}"
+    config["subagent_model"] = f"openai/{model}"
     return config
 
 
 def merge_vscode_settings(existing: dict[str, Any], *, roocode_import_path: Path, model: str) -> dict[str, Any]:
     settings = dict(existing)
     settings["roo-cline.autoImportSettingsPath"] = str(roocode_import_path)
-    settings["kilo-code.new.model.providerID"] = "openai-compatible"
+    settings["kilo-code.new.model.providerID"] = "openai"
     settings["kilo-code.new.model.modelID"] = model
     return settings
 

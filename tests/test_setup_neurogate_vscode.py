@@ -47,17 +47,16 @@ class NeuroGateConfigTests(unittest.TestCase):
         self.assertIn("command -v python3", script)
         self.assertIn("command -v code", script)
 
-    def test_roocode_import_contains_openai_compatible_neurogate_profile(self):
+    def test_roocode_import_contains_openai_native_neurogate_profile(self):
         payload = setup.build_roocode_import("sk-test", model="gpt-5.5")
 
         profile = payload["providerProfiles"]["apiConfigs"]["NeuroGate API"]
 
         self.assertEqual(payload["providerProfiles"]["currentApiConfigName"], "NeuroGate API")
-        self.assertEqual(profile["apiProvider"], "openai")
-        self.assertEqual(profile["openAiBaseUrl"], setup.NEUROGATE_BASE_URL)
-        self.assertEqual(profile["openAiApiKey"], "sk-test")
-        self.assertEqual(profile["openAiModelId"], "gpt-5.5")
-        self.assertEqual(profile["openAiCustomModelInfo"]["contextWindow"], 1_050_000)
+        self.assertEqual(profile["apiProvider"], "openai-native")
+        self.assertEqual(profile["openAiNativeBaseUrl"], setup.NEUROGATE_BASE_URL)
+        self.assertEqual(profile["openAiNativeApiKey"], "sk-test")
+        self.assertEqual(profile["apiModelId"], "gpt-5.5")
 
     def test_cline_provider_settings_select_openai_compatible_provider(self):
         providers = setup.build_cline_providers(
@@ -91,19 +90,26 @@ class NeuroGateConfigTests(unittest.TestCase):
         self.assertIn("tools", settings["capabilities"])
         self.assertEqual(entry["tokenSource"], "manual")
 
-    def test_kilo_config_writes_openai_compatible_provider_and_active_model(self):
+    def test_kilo_config_writes_openai_responses_provider_and_active_model(self):
         config = setup.merge_kilo_config(
             {"$schema": "https://app.kilo.ai/config.json"},
             api_key="sk-test",
             model="gpt-5.5",
         )
 
-        provider = config["provider"]["openai-compatible"]
+        provider = config["provider"]["openai"]
+        model_config = provider["models"]["gpt-5.5"]
 
-        self.assertEqual(config["model"], "openai-compatible/gpt-5.5")
+        self.assertEqual(config["model"], "openai/gpt-5.5")
+        self.assertEqual(config["small_model"], "openai/gpt-5.5")
+        self.assertEqual(config["subagent_model"], "openai/gpt-5.5")
+        self.assertEqual(provider["npm"], "@ai-sdk/openai")
         self.assertEqual(provider["options"]["baseURL"], setup.NEUROGATE_BASE_URL)
         self.assertEqual(provider["options"]["apiKey"], "sk-test")
-        self.assertEqual(provider["models"]["gpt-5.5"]["name"], "gpt-5.5")
+        self.assertEqual(model_config["name"], "gpt-5.5")
+        self.assertEqual(model_config["ai_sdk_provider"], "openai")
+        self.assertEqual(model_config["prompt"], "gpt55")
+        self.assertTrue(model_config["tool_call"])
 
     def test_vscode_settings_wire_roo_auto_import_and_kilo_active_model(self):
         settings = setup.merge_vscode_settings(
@@ -117,7 +123,7 @@ class NeuroGateConfigTests(unittest.TestCase):
             settings["roo-cline.autoImportSettingsPath"],
             "/tmp/neurogate/roocode.json",
         )
-        self.assertEqual(settings["kilo-code.new.model.providerID"], "openai-compatible")
+        self.assertEqual(settings["kilo-code.new.model.providerID"], "openai")
         self.assertEqual(settings["kilo-code.new.model.modelID"], "gpt-5.5")
 
     def test_jsonc_reader_accepts_comments_and_trailing_commas(self):

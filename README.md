@@ -6,10 +6,15 @@ Installs and configures these VS Code extensions:
 - Kilo Code: `kilocode.kilo-code`
 - Cline: `saoudrizwan.claude-dev`
 
-The script configures NeuroGate as an OpenAI-compatible API:
+The script configures NeuroGate through the OpenAI Responses API for GPT models:
 
 - Base URL: `https://api.neurogate.space/v1`
 - Default model: `gpt-5.5`
+- RooCode provider: `openai-native`
+- Kilo Code provider: `openai` with `@ai-sdk/openai`
+- Cline protocol: `openai-responses`
+
+RooCode and Kilo Code must not use the generic Chat Completions/OpenAI-compatible route for this NeuroGate GPT provider; that route can fail with `upstream_rejected`.
 
 ## Quick install
 
@@ -64,6 +69,8 @@ On Windows, the script also checks WSL and runs the same setup inside the defaul
 - Cline provider settings: `~/.cline/data/settings/providers.json`
 
 Existing files are backed up as `*.bak-YYYYmmdd-HHMMSS` before changes.
+
+The API check calls both `/v1/models` and a minimal streaming `/v1/responses` request, so a bad key or unsupported wire protocol is caught during setup.
 
 ## Tests
 
