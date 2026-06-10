@@ -33,6 +33,20 @@ class NeuroGateConfigTests(unittest.TestCase):
             ],
         )
 
+    def test_install_missing_deps_flag_is_available(self):
+        args = setup.parse_args(["--install-missing-deps", "--non-interactive"])
+
+        self.assertTrue(args.install_missing_deps)
+        self.assertTrue(args.non_interactive)
+
+    def test_wsl_bootstrap_installs_python_and_code_cli(self):
+        script = setup.wsl_dependency_bootstrap_script()
+
+        self.assertIn("install_python", script)
+        self.assertIn("install_code", script)
+        self.assertIn("command -v python3", script)
+        self.assertIn("command -v code", script)
+
     def test_roocode_import_contains_openai_compatible_neurogate_profile(self):
         payload = setup.build_roocode_import("sk-test", model="gpt-5.5")
 

@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"System: {platform_info.kind} ({platform_info.system} {platform_info.release})")
 
     code_cli = find_code_cli(args.code_bin)
+    if not code_cli and args.install_missing_deps:
+        install_missing_system_dependencies(platform_info, dry_run=args.dry_run)
+        code_cli = find_code_cli(args.code_bin)
     if not code_cli:
         print("ERROR: VS Code CLI was not found. Install VS Code or add 'code' to PATH.", file=sys.stderr)
         return 2
@@ -90,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_extensions(paths, api_key=api_key, model=args.model, dry_run=args.dry_run)
 
     if platform_info.kind == "windows" and not args.skip_wsl:
-        configure_wsl(args, api_key=api_key)
+        configure_wsl(args, api_key=api_key, install_missing_deps=args.install_missing_deps)
 
     print("Finished. Restart VS Code to let the extensions reload their settings.")
     return 0
@@ -107,6 +110,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--skip-api-check", action="store_true", help="Do not call /v1/models.")
     parser.add_argument("--api-timeout", type=int, default=60, help="API check timeout in seconds.")
     parser.add_argument("--code-bin", help="Path or command name for VS Code CLI.")
+    parser.add_argument("--install-missing-deps", action="store_true", help="Install missing system dependencies when possible.")
     parser.add_argument("--skip-wsl", action="store_true", help="On Windows, do not configure WSL.")
     parser.add_argument("--wsl-distro", help="On Windows, configure this WSL distribution.")
     parser.add_argument("--dry-run", action="store_true", help="Print intended actions without writing files.")
@@ -191,6 +195,138 @@ def find_code_cli(explicit: str | None = None) -> CodeCli | None:
         if Path(command).exists() or shutil.which(command):
             return CodeCli(command=command, flavor=flavor)
     return None
+
+
+def install_missing_system_dependencies(platform_info: PlatformInfo, *, dry_run: bool) -> None:
+    commands = vscode_install_commands(platform_info)
+    if not commands:
+        raise RuntimeError(f"Automatic VS Code installation is not supported for {platform_info.kind}.")
+
+    print("VS Code CLI was not found. Installing VS Code for this system.")
+    for command in commands:
+        print(f"Dependency command: {format_command(command)}")
+        if not dry_run:
+            run_checked(command, timeout=1800)
+
+
+def vscode_install_commands(platform_info: PlatformInfo) -> list[list[str]]:
+    if platform_info.kind == "windows":
+        if shutil.which("winget"):
+            return [
+                [
+                    "winget",
+                    "install",
+                    "-e",
+                    "--id",
+                    "Microsoft.VisualStudioCode",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
+                ],
+            ]
+        if shutil.which("choco"):
+            return [["choco", "install", "vscode", "-y"]]
+        return []
+
+    if platform_info.kind == "macos":
+        if shutil.which("brew"):
+            return [["brew", "install", "--cask", "visual-studio-code"]]
+        return []
+
+    if platform_info.kind == "nixos":
+        if shutil.which("nix"):
+            return [
+                [
+                    "env",
+                    "NIXPKGS_ALLOW_UNFREE=1",
+                    "nix",
+                    "--extra-experimental-features",
+                    "nix-command",
+                    "--extra-experimental-features",
+                    "flakes",
+                    "profile",
+                    "install",
+                    "--impure",
+                    "nixpkgs#vscode",
+                ],
+            ]
+        if shutil.which("nix-env"):
+            return [["env", "NIXPKGS_ALLOW_UNFREE=1", "nix-env", "-iA", "nixpkgs.vscode"]]
+        return []
+
+    if shutil.which("apt-get"):
+        return [
+            ["sh", "-lc", "sudo apt-get update && sudo apt-get install -y wget gpg ca-certificates"],
+            [
+                "sh",
+                "-lc",
+                "wget -qO- https://packages.microsoft.com/keys/microsoft.asc | "
+                "gpg --dearmor > /tmp/packages.microsoft.gpg && "
+                "sudo install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /usr/share/keyrings/packages.microsoft.gpg",
+            ],
+            [
+                "sh",
+                "-lc",
+                'printf "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/packages.microsoft.gpg] '
+                'https://packages.microsoft.com/repos/code stable main\\n" | '
+                "sudo tee /etc/apt/sources.list.d/vscode.list >/dev/null",
+            ],
+            ["sh", "-lc", "sudo apt-get update && sudo apt-get install -y code"],
+        ]
+
+    if shutil.which("dnf"):
+        return [
+            ["sh", "-lc", "sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc"],
+            [
+                "sh",
+                "-lc",
+                "printf '[code]\\nname=Visual Studio Code\\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\\n"
+                "enabled=1\\nautorefresh=1\\ntype=rpm-md\\ngpgcheck=1\\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\\n' | "
+                "sudo tee /etc/yum.repos.d/vscode.repo >/dev/null",
+            ],
+            ["sudo", "dnf", "install", "-y", "code"],
+        ]
+
+    if shutil.which("yum"):
+        return [
+            ["sh", "-lc", "sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc"],
+            [
+                "sh",
+                "-lc",
+                "printf '[code]\\nname=Visual Studio Code\\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\\n"
+                "enabled=1\\nautorefresh=1\\ntype=rpm-md\\ngpgcheck=1\\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\\n' | "
+                "sudo tee /etc/yum.repos.d/vscode.repo >/dev/null",
+            ],
+            ["sudo", "yum", "install", "-y", "code"],
+        ]
+
+    if shutil.which("zypper"):
+        return [
+            ["sh", "-lc", "sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc"],
+            [
+                "sudo",
+                "zypper",
+                "--non-interactive",
+                "addrepo",
+                "https://packages.microsoft.com/yumrepos/vscode",
+                "vscode",
+            ],
+            ["sudo", "zypper", "--non-interactive", "install", "code"],
+        ]
+
+    if shutil.which("pacman"):
+        return [["sudo", "pacman", "-Sy", "--needed", "--noconfirm", "code"]]
+
+    return []
+
+
+def format_command(command: list[str]) -> str:
+    return " ".join(quote_command_part(part) for part in command)
+
+
+def quote_command_part(part: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_@%+=:,./#-]+", part):
+        return part
+    return "'" + part.replace("'", "'\"'\"'") + "'"
 
 
 def guess_code_flavor(command: str) -> str:
@@ -573,7 +709,7 @@ def set_private_mode(path: Path, mode: int) -> None:
             pass
 
 
-def configure_wsl(args: argparse.Namespace, *, api_key: str) -> None:
+def configure_wsl(args: argparse.Namespace, *, api_key: str, install_missing_deps: bool) -> None:
     wsl = shutil.which("wsl.exe") or shutil.which("wsl")
     if not wsl:
         print("WSL: not found")
@@ -582,6 +718,9 @@ def configure_wsl(args: argparse.Namespace, *, api_key: str) -> None:
     base_args = [wsl]
     if args.wsl_distro:
         base_args.extend(["--distribution", args.wsl_distro])
+
+    if install_missing_deps:
+        ensure_wsl_dependencies(base_args, dry_run=args.dry_run)
 
     ready_args = base_args + ["--", "sh", "-lc", "command -v python3 >/dev/null && command -v code >/dev/null && printf ready"]
     try:
@@ -620,6 +759,89 @@ def configure_wsl(args: argparse.Namespace, *, api_key: str) -> None:
         "runpy.run_path(path,run_name='__main__')"
     )
     run_checked(base_args + ["--", "python3", "-c", loader], input_text=json.dumps(payload), timeout=900)
+
+
+def ensure_wsl_dependencies(base_args: list[str], *, dry_run: bool) -> None:
+    print("WSL: ensuring python3 and code CLI")
+    if dry_run:
+        print("WSL: would install python3 and VS Code CLI when missing")
+        return
+    try:
+        run_checked(base_args + ["--", "sh", "-lc", wsl_dependency_bootstrap_script()], timeout=1800)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        output = ""
+        if isinstance(exc, subprocess.CalledProcessError):
+            output = (exc.stderr or exc.stdout or "").strip()
+        print(f"WSL: dependency install failed; skipped ({sanitize_secret(output, '')})")
+
+
+def wsl_dependency_bootstrap_script() -> str:
+    return r"""
+set -eu
+if command -v python3 >/dev/null 2>&1 && command -v code >/dev/null 2>&1; then
+  exit 0
+fi
+as_root() {
+  if [ "$(id -u)" = "0" ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "sudo is required inside WSL" >&2
+    return 1
+  fi
+}
+install_python() {
+  command -v python3 >/dev/null 2>&1 && return 0
+  if command -v apt-get >/dev/null 2>&1; then
+    as_root apt-get update
+    as_root apt-get install -y python3 curl ca-certificates gpg
+  elif command -v dnf >/dev/null 2>&1; then
+    as_root dnf install -y python3 curl ca-certificates
+  elif command -v yum >/dev/null 2>&1; then
+    as_root yum install -y python3 curl ca-certificates
+  elif command -v zypper >/dev/null 2>&1; then
+    as_root zypper --non-interactive install python3 curl ca-certificates
+  elif command -v pacman >/dev/null 2>&1; then
+    as_root pacman -Sy --needed --noconfirm python curl ca-certificates
+  elif command -v apk >/dev/null 2>&1; then
+    as_root apk add python3 curl ca-certificates
+  elif command -v nix >/dev/null 2>&1; then
+    env NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features nix-command --extra-experimental-features flakes profile install --impure nixpkgs#python3
+  fi
+}
+install_code() {
+  command -v code >/dev/null 2>&1 && return 0
+  if command -v apt-get >/dev/null 2>&1; then
+    as_root apt-get update
+    as_root apt-get install -y wget gpg ca-certificates
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/packages.microsoft.gpg
+    as_root install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /usr/share/keyrings/packages.microsoft.gpg
+    printf "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main\n" | as_root tee /etc/apt/sources.list.d/vscode.list >/dev/null
+    as_root apt-get update
+    as_root apt-get install -y code
+  elif command -v dnf >/dev/null 2>&1; then
+    as_root rpm --import https://packages.microsoft.com/keys/microsoft.asc
+    printf "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\nautorefresh=1\ntype=rpm-md\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\n" | as_root tee /etc/yum.repos.d/vscode.repo >/dev/null
+    as_root dnf install -y code
+  elif command -v yum >/dev/null 2>&1; then
+    as_root rpm --import https://packages.microsoft.com/keys/microsoft.asc
+    printf "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\nautorefresh=1\ntype=rpm-md\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\n" | as_root tee /etc/yum.repos.d/vscode.repo >/dev/null
+    as_root yum install -y code
+  elif command -v zypper >/dev/null 2>&1; then
+    as_root rpm --import https://packages.microsoft.com/keys/microsoft.asc
+    as_root zypper --non-interactive addrepo https://packages.microsoft.com/yumrepos/vscode vscode || true
+    as_root zypper --non-interactive install code
+  elif command -v pacman >/dev/null 2>&1; then
+    as_root pacman -Sy --needed --noconfirm code
+  elif command -v nix >/dev/null 2>&1; then
+    env NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features nix-command --extra-experimental-features flakes profile install --impure nixpkgs#vscode
+  fi
+}
+install_python
+install_code
+command -v python3 >/dev/null 2>&1 && command -v code >/dev/null 2>&1
+"""
 
 
 if __name__ == "__main__":

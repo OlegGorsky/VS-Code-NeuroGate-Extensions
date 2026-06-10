@@ -1,4 +1,4 @@
-# NeuroGate VS Code setup
+# VS Code - NeuroGate Extensions
 
 Installs and configures these VS Code extensions:
 
@@ -11,25 +11,50 @@ The script configures NeuroGate as an OpenAI-compatible API:
 - Base URL: `https://api.neurogate.space/v1`
 - Default model: `gpt-5.5`
 
-## Run
+## Quick install
+
+Linux, NixOS, Ubuntu, WSL, macOS:
 
 ```bash
-python3 setup_neurogate_vscode.py
+curl -fsSL https://github.com/OlegGorsky/VS-Code-NeuroGate-Extensions/raw/main/i | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/OlegGorsky/VS-Code-NeuroGate-Extensions/raw/main/w | iex
+```
+
+The bootstrap installers download `setup_neurogate_vscode.py`, install Python 3 when it is missing, then run the setup with `--install-missing-deps`.
+
+## Manual run
+
+```bash
+python3 setup_neurogate_vscode.py --install-missing-deps
 ```
 
 Non-interactive mode:
 
 ```bash
-NEUROGATE_API_KEY='sk-...' python3 setup_neurogate_vscode.py --non-interactive
+NEUROGATE_API_KEY='sk-...' python3 setup_neurogate_vscode.py --install-missing-deps --non-interactive
 ```
 
 Dry-run without touching files:
 
 ```bash
-NEUROGATE_API_KEY='sk-test' python3 setup_neurogate_vscode.py --dry-run --skip-api-check --non-interactive
+NEUROGATE_API_KEY='sk-test' python3 setup_neurogate_vscode.py --install-missing-deps --dry-run --skip-api-check --non-interactive
 ```
 
-On Windows, the script also checks WSL and runs the same setup inside the default WSL distro when `python3` and `code` are available there. Use `--skip-wsl` to disable that or `--wsl-distro NAME` to target a distro.
+On Windows, the script also checks WSL and runs the same setup inside the default WSL distro. With `--install-missing-deps`, it tries to install `python3` and the VS Code CLI inside WSL first. Use `--skip-wsl` to disable that or `--wsl-distro NAME` to target a distro.
+
+## Dependency install
+
+- Python 3: installed by `i`/`w` when missing.
+- VS Code CLI: installed by `setup_neurogate_vscode.py --install-missing-deps` when missing.
+- NixOS: uses transient `nix-shell` for Python when needed and tries `nix profile install --impure nixpkgs#vscode` for VS Code.
+- Ubuntu/Debian: uses Microsoft apt repository for VS Code.
+- macOS: uses Homebrew.
+- Windows: uses `winget`, then `choco` fallback.
 
 ## Files written
 
