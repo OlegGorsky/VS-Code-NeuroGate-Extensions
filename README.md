@@ -8,7 +8,8 @@ Installs and configures these VS Code extensions:
 
 The script configures NeuroGate through the OpenAI Responses API for GPT models:
 
-- Base URL: `https://api.neurogate.space/v1`
+- OpenAI-compatible base URL: `https://api.neurogate.space/v1`
+- RooCode native base URL: `https://api.neurogate.space`
 - Default model: `gpt-5.5`
 - RooCode provider: `openai-native`
 - Kilo Code provider: `openai` with `@ai-sdk/openai`

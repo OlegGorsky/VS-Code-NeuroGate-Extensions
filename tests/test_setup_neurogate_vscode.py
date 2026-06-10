@@ -54,7 +54,7 @@ class NeuroGateConfigTests(unittest.TestCase):
 
         self.assertEqual(payload["providerProfiles"]["currentApiConfigName"], "NeuroGate API")
         self.assertEqual(profile["apiProvider"], "openai-native")
-        self.assertEqual(profile["openAiNativeBaseUrl"], setup.NEUROGATE_BASE_URL)
+        self.assertEqual(profile["openAiNativeBaseUrl"], setup.NEUROGATE_ROOCODE_BASE_URL)
         self.assertEqual(profile["openAiNativeApiKey"], "sk-test")
         self.assertEqual(profile["apiModelId"], "gpt-5.5")
 

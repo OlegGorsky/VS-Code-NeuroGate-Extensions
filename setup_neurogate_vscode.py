@@ -22,6 +22,7 @@ from typing import Any, Iterable
 
 PROVIDER_NAME = "NeuroGate API"
 NEUROGATE_BASE_URL = "https://api.neurogate.space/v1"
+NEUROGATE_ROOCODE_BASE_URL = "https://api.neurogate.space"
 DEFAULT_MODEL = "gpt-5.5"
 MODEL_CONTEXT_WINDOW = 1_050_000
 MODEL_MAX_TOKENS = 128_000
@@ -577,7 +578,7 @@ def build_roocode_import(api_key: str, *, model: str) -> dict[str, Any]:
         "apiProvider": "openai-native",
         "apiModelId": model,
         "openAiNativeApiKey": api_key,
-        "openAiNativeBaseUrl": NEUROGATE_BASE_URL,
+        "openAiNativeBaseUrl": NEUROGATE_ROOCODE_BASE_URL,
     }
     return {
         "providerProfiles": {
