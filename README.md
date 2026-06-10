@@ -17,7 +17,10 @@ The script configures NeuroGate through the OpenAI Responses API for GPT models:
 
 RooCode and Kilo Code must not use the generic Chat Completions/OpenAI-compatible route for this NeuroGate GPT provider; that route can fail with `upstream_rejected`.
 
-The setup also patches RooCode's bundled ripgrep lookup for newer VS Code builds that ship `@vscode/ripgrep-universal` instead of the older `@vscode/ripgrep` package. This prevents RooCode from failing before the first API request with `Could not find ripgrep binary`, which is common with immutable VS Code installs such as NixOS.
+The setup also patches RooCode's bundled compatibility gaps:
+
+- ripgrep lookup for newer VS Code builds that ship `@vscode/ripgrep-universal` instead of the older `@vscode/ripgrep` package. This prevents RooCode from failing before the first API request with `Could not find ripgrep binary`, which is common with immutable VS Code installs such as NixOS.
+- OpenAI native model registry, so RooCode accepts the NeuroGate default `gpt-5.5` instead of falling back to its bundled default model. Without this, RooCode can send `gpt-5.1-codex-max` and NeuroGate returns `Unknown model`.
 
 ## Quick install
 

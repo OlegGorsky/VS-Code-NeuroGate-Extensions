@@ -79,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"VS Code CLI: {code_cli.command}")
     install_missing_extensions(code_cli, EXTENSIONS, dry_run=args.dry_run)
     patch_roocode_ripgrep_compat(code_cli.flavor, dry_run=args.dry_run)
+    patch_roocode_neurogate_model_compat(code_cli.flavor, model=args.model, dry_run=args.dry_run)
 
     api_key = read_api_key(args)
     if not args.skip_api_check:
@@ -389,6 +390,18 @@ def patch_roocode_ripgrep_compat(code_flavor: str, *, dry_run: bool) -> None:
         print(f"RooCode ripgrep compatibility patch: {result} ({extension_js})")
 
 
+def patch_roocode_neurogate_model_compat(code_flavor: str, *, model: str, dry_run: bool) -> None:
+    extension_dirs = roocode_extension_dirs(code_flavor)
+    if not extension_dirs:
+        print("RooCode NeuroGate model patch: RooCode extension directory not found")
+        return
+
+    for extension_dir in extension_dirs:
+        extension_js = extension_dir / "dist" / "extension.js"
+        result = patch_roocode_model_registry_file(extension_js, model=model, dry_run=dry_run)
+        print(f"RooCode NeuroGate model patch: {result} ({extension_js})")
+
+
 def roocode_extension_dirs(code_flavor: str) -> list[Path]:
     root = vscode_extensions_dir(code_flavor)
     if not root.exists():
@@ -429,6 +442,115 @@ def patch_roocode_ripgrep_file(extension_js: Path, *, dry_run: bool) -> str:
     shutil.copy2(extension_js, backup)
     extension_js.write_text(patched, encoding="utf-8")
     return "patched"
+
+
+def patch_roocode_model_registry_file(extension_js: Path, *, model: str, dry_run: bool) -> str:
+    if not extension_js.exists():
+        return "missing extension bundle"
+
+    body = extension_js.read_text(encoding="utf-8", errors="ignore")
+    registry = roocode_model_registry_bounds(body)
+    if not registry:
+        return "unsupported RooCode bundle layout"
+
+    content_start, content_end = registry
+    model_key = roocode_model_registry_key(model)
+    entry = roocode_model_registry_entry(model)
+    key_index = body.find(model_key, content_start, content_end)
+    if key_index >= 0:
+        value_start = key_index + len(model_key)
+        if value_start >= content_end or body[value_start] != "{":
+            return "unsupported RooCode bundle layout"
+        value_end = find_matching_js_brace(body, value_start)
+        if value_end is None or value_end > content_end:
+            return "unsupported RooCode bundle layout"
+        value_end += 1
+        if body[key_index:value_end] == entry:
+            return "already compatible"
+        patched = body[:key_index] + entry + body[value_end:]
+    else:
+        patched = body[:content_start] + entry + "," + body[content_start:]
+
+    if patched == body:
+        return "unchanged"
+
+    if dry_run:
+        return "would patch"
+
+    backup = extension_js.with_name(f"{extension_js.name}.bak-neurogate-model-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.copy2(extension_js, backup)
+    extension_js.write_text(patched, encoding="utf-8")
+    return "patched"
+
+
+def roocode_model_registry_bounds(body: str) -> tuple[int, int] | None:
+    match = re.search(r'\$jt="[^"]+",see=\{', body)
+    if not match:
+        return None
+    open_brace = match.end() - 1
+    close_brace = find_matching_js_brace(body, open_brace)
+    if close_brace is None:
+        return None
+    return match.end(), close_brace
+
+
+def find_matching_js_brace(body: str, open_brace: int) -> int | None:
+    if open_brace >= len(body) or body[open_brace] != "{":
+        return None
+
+    depth = 0
+    in_string: str | None = None
+    escape = False
+    for index in range(open_brace, len(body)):
+        char = body[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == in_string:
+                in_string = None
+            continue
+
+        if char in {'"', "'", "`"}:
+            in_string = char
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def roocode_model_registry_key(model: str) -> str:
+    return json.dumps(model, ensure_ascii=False) + ":"
+
+
+def roocode_model_registry_entry(model: str) -> str:
+    payload = {model: build_roocode_model_info()}
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[1:-1]
+
+
+def build_roocode_model_info() -> dict[str, Any]:
+    return {
+        "maxTokens": MODEL_MAX_TOKENS,
+        "contextWindow": MODEL_CONTEXT_WINDOW,
+        "includedTools": ["apply_patch"],
+        "excludedTools": ["apply_diff", "write_to_file"],
+        "supportsImages": True,
+        "supportsPromptCache": True,
+        "supportsReasoningEffort": ["disable"],
+        "reasoningEffort": "disable",
+        "supportsVerbosity": False,
+        "supportsTemperature": False,
+        "inputPrice": 5,
+        "outputPrice": 30,
+        "cacheReadsPrice": 0.5,
+        "description": "NeuroGate GPT model via OpenAI Responses API.",
+    }
 
 
 def ripgrep_universal_platform_dir() -> str:
@@ -653,6 +775,8 @@ def build_roocode_import(api_key: str, *, model: str) -> dict[str, Any]:
         "apiModelId": model,
         "openAiNativeApiKey": api_key,
         "openAiNativeBaseUrl": NEUROGATE_ROOCODE_BASE_URL,
+        "reasoningEffort": "disable",
+        "enableResponsesReasoningSummary": False,
     }
     return {
         "providerProfiles": {

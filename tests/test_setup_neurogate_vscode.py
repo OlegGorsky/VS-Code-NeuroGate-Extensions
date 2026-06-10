@@ -76,6 +76,55 @@ class NeuroGateConfigTests(unittest.TestCase):
             self.assertEqual(result, "already compatible")
             self.assertFalse(list(Path(tmp).glob("extension.js.bak-neurogate-*")))
 
+    def test_roocode_model_registry_patch_adds_neurogate_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_js = Path(tmp) / "extension.js"
+            extension_js.write_text(
+                '$jt="gpt-5.1-codex-max",see={"gpt-5.4":{maxTokens:128e3}};'
+                'getModel(){let e=this.options.apiModelId,r=e&&e in see?e:$jt}',
+                encoding="utf-8",
+            )
+
+            result = setup.patch_roocode_model_registry_file(extension_js, model="gpt-5.5", dry_run=False)
+            patched = extension_js.read_text(encoding="utf-8")
+
+            self.assertEqual(result, "patched")
+            self.assertIn('"gpt-5.5":', patched)
+            self.assertIn('"reasoningEffort":"disable"', patched)
+            self.assertIn('"supportsReasoningEffort":["disable"]', patched)
+            self.assertTrue(list(Path(tmp).glob("extension.js.bak-neurogate-model-*")))
+
+    def test_roocode_model_registry_patch_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_js = Path(tmp) / "extension.js"
+            entry = setup.roocode_model_registry_entry("gpt-5.5")
+            extension_js.write_text(
+                f'$jt="gpt-5.1-codex-max",see={{{entry}}};',
+                encoding="utf-8",
+            )
+
+            result = setup.patch_roocode_model_registry_file(extension_js, model="gpt-5.5", dry_run=False)
+
+            self.assertEqual(result, "already compatible")
+            self.assertFalse(list(Path(tmp).glob("extension.js.bak-neurogate-model-*")))
+
+    def test_roocode_model_registry_patch_replaces_unsafe_existing_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_js = Path(tmp) / "extension.js"
+            extension_js.write_text(
+                '$jt="gpt-5.1-codex-max",see={"gpt-5.5":{maxTokens:128e3,'
+                'supportsReasoningEffort:["none","low"],reasoningEffort:"none"}};',
+                encoding="utf-8",
+            )
+
+            result = setup.patch_roocode_model_registry_file(extension_js, model="gpt-5.5", dry_run=False)
+            patched = extension_js.read_text(encoding="utf-8")
+
+            self.assertEqual(result, "patched")
+            self.assertIn('"reasoningEffort":"disable"', patched)
+            self.assertNotIn('reasoningEffort:"none"', patched)
+            self.assertTrue(list(Path(tmp).glob("extension.js.bak-neurogate-model-*")))
+
     def test_roocode_import_contains_openai_native_neurogate_profile(self):
         payload = setup.build_roocode_import("sk-test", model="gpt-5.5")
 
@@ -86,6 +135,8 @@ class NeuroGateConfigTests(unittest.TestCase):
         self.assertEqual(profile["openAiNativeBaseUrl"], setup.NEUROGATE_ROOCODE_BASE_URL)
         self.assertEqual(profile["openAiNativeApiKey"], "sk-test")
         self.assertEqual(profile["apiModelId"], "gpt-5.5")
+        self.assertEqual(profile["reasoningEffort"], "disable")
+        self.assertFalse(profile["enableResponsesReasoningSummary"])
 
     def test_cline_provider_settings_select_openai_compatible_provider(self):
         providers = setup.build_cline_providers(
