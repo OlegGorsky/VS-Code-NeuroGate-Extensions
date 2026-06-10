@@ -78,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"VS Code CLI: {code_cli.command}")
     install_missing_extensions(code_cli, EXTENSIONS, dry_run=args.dry_run)
+    patch_roocode_ripgrep_compat(code_cli.flavor, dry_run=args.dry_run)
 
     api_key = read_api_key(args)
     if not args.skip_api_check:
@@ -374,6 +375,79 @@ def list_installed_extensions(code_cli: CodeCli) -> set[str]:
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         raise RuntimeError(f"Failed to list VS Code extensions with {code_cli.command}") from exc
     return {line.strip().lower() for line in result.stdout.splitlines() if line.strip()}
+
+
+def patch_roocode_ripgrep_compat(code_flavor: str, *, dry_run: bool) -> None:
+    extension_dirs = roocode_extension_dirs(code_flavor)
+    if not extension_dirs:
+        print("RooCode ripgrep compatibility patch: RooCode extension directory not found")
+        return
+
+    for extension_dir in extension_dirs:
+        extension_js = extension_dir / "dist" / "extension.js"
+        result = patch_roocode_ripgrep_file(extension_js, dry_run=dry_run)
+        print(f"RooCode ripgrep compatibility patch: {result} ({extension_js})")
+
+
+def roocode_extension_dirs(code_flavor: str) -> list[Path]:
+    root = vscode_extensions_dir(code_flavor)
+    if not root.exists():
+        return []
+    return sorted(root.glob("rooveterinaryinc.roo-cline-*"), reverse=True)
+
+
+def vscode_extensions_dir(code_flavor: str) -> Path:
+    home = Path.home()
+    if code_flavor == "code-insiders":
+        return home / ".vscode-insiders" / "extensions"
+    if code_flavor == "codium":
+        return home / ".vscode-oss" / "extensions"
+    return home / ".vscode" / "extensions"
+
+
+def patch_roocode_ripgrep_file(extension_js: Path, *, dry_run: bool) -> str:
+    if not extension_js.exists():
+        return "missing extension bundle"
+
+    body = extension_js.read_text(encoding="utf-8", errors="ignore")
+    if "node_modules/@vscode/ripgrep-universal/bin/" in body:
+        return "already compatible"
+
+    needle = 'await e("node_modules/@vscode/ripgrep/bin/")'
+    if needle not in body:
+        return "unsupported RooCode bundle layout"
+
+    universal_fallback = f'{needle}||await e("node_modules/@vscode/ripgrep-universal/bin/{ripgrep_universal_platform_dir()}/")'
+    patched = body.replace(needle, universal_fallback, 1)
+    if patched == body:
+        return "unchanged"
+
+    if dry_run:
+        return "would patch"
+
+    backup = extension_js.with_name(f"{extension_js.name}.bak-neurogate-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.copy2(extension_js, backup)
+    extension_js.write_text(patched, encoding="utf-8")
+    return "patched"
+
+
+def ripgrep_universal_platform_dir() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        arch = "x64"
+    elif machine in {"aarch64", "arm64"}:
+        arch = "arm64"
+    elif machine.startswith("arm"):
+        arch = "arm"
+    else:
+        arch = machine or "x64"
+
+    if system == "darwin":
+        return f"darwin-{arch}"
+    if system == "windows":
+        return f"win32-{arch}"
+    return f"linux-{arch}"
 
 
 def read_api_key(args: argparse.Namespace) -> str:

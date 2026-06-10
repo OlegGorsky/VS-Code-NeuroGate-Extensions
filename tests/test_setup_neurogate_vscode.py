@@ -47,6 +47,35 @@ class NeuroGateConfigTests(unittest.TestCase):
         self.assertIn("command -v python3", script)
         self.assertIn("command -v code", script)
 
+    def test_roocode_ripgrep_patch_adds_universal_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_js = Path(tmp) / "extension.js"
+            extension_js.write_text(
+                'return await e("node_modules/@vscode/ripgrep/bin/")||'
+                'await e("node_modules/vscode-ripgrep/bin")',
+                encoding="utf-8",
+            )
+
+            result = setup.patch_roocode_ripgrep_file(extension_js, dry_run=False)
+            patched = extension_js.read_text(encoding="utf-8")
+
+            self.assertEqual(result, "patched")
+            self.assertIn("node_modules/@vscode/ripgrep-universal/bin/", patched)
+            self.assertTrue(list(Path(tmp).glob("extension.js.bak-neurogate-*")))
+
+    def test_roocode_ripgrep_patch_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_js = Path(tmp) / "extension.js"
+            extension_js.write_text(
+                'await e("node_modules/@vscode/ripgrep-universal/bin/linux-x64/")',
+                encoding="utf-8",
+            )
+
+            result = setup.patch_roocode_ripgrep_file(extension_js, dry_run=False)
+
+            self.assertEqual(result, "already compatible")
+            self.assertFalse(list(Path(tmp).glob("extension.js.bak-neurogate-*")))
+
     def test_roocode_import_contains_openai_native_neurogate_profile(self):
         payload = setup.build_roocode_import("sk-test", model="gpt-5.5")
 
