@@ -76,6 +76,30 @@ class NeuroGateConfigTests(unittest.TestCase):
             self.assertEqual(result, "already compatible")
             self.assertFalse(list(Path(tmp).glob("extension.js.bak-neurogate-*")))
 
+    def test_webview_cache_cleanup_moves_cache_paths_to_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            user_data_dir = Path(tmp) / "Code"
+            cache_dirs = [
+                user_data_dir / "Service Worker",
+                user_data_dir / "Code Cache",
+                user_data_dir / "WebStorage" / "1" / "CacheStorage",
+            ]
+            for cache_dir in cache_dirs:
+                cache_dir.mkdir(parents=True)
+                (cache_dir / "marker").write_text("cache", encoding="utf-8")
+
+            result = setup.move_vscode_webview_cache(user_data_dir, dry_run=False)
+
+            self.assertIn("moved 3 cache path(s)", result)
+            for cache_dir in cache_dirs:
+                self.assertFalse(cache_dir.exists())
+
+            backups = list((user_data_dir / "neurogate-webview-cache-backups").glob("*"))
+            self.assertEqual(len(backups), 1)
+            self.assertTrue((backups[0] / "Service Worker" / "marker").exists())
+            self.assertTrue((backups[0] / "Code Cache" / "marker").exists())
+            self.assertTrue((backups[0] / "WebStorage" / "1" / "CacheStorage" / "marker").exists())
+
     def test_roocode_model_registry_patch_adds_neurogate_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             extension_js = Path(tmp) / "extension.js"

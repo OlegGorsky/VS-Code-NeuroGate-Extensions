@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     install_missing_extensions(code_cli, EXTENSIONS, dry_run=args.dry_run)
     patch_roocode_ripgrep_compat(code_cli.flavor, dry_run=args.dry_run)
     patch_roocode_neurogate_model_compat(code_cli.flavor, model=args.model, dry_run=args.dry_run)
+    clear_vscode_webview_cache(code_cli.flavor, dry_run=args.dry_run)
 
     api_key = read_api_key(args)
     if not args.skip_api_check:
@@ -418,6 +419,65 @@ def vscode_extensions_dir(code_flavor: str) -> Path:
     return home / ".vscode" / "extensions"
 
 
+def clear_vscode_webview_cache(code_flavor: str, *, dry_run: bool) -> None:
+    user_data_dir = vscode_user_data_dir(code_flavor)
+    result = move_vscode_webview_cache(user_data_dir, dry_run=dry_run)
+    print(f"VS Code webview cache cleanup: {result} ({user_data_dir})")
+
+
+def move_vscode_webview_cache(user_data_dir: Path, *, dry_run: bool) -> str:
+    paths = existing_vscode_webview_cache_paths(user_data_dir)
+    if not paths:
+        return "nothing to clear"
+    if dry_run:
+        return f"would move {len(paths)} cache path(s)"
+
+    backup_root = unique_backup_dir(user_data_dir / "neurogate-webview-cache-backups" / time.strftime("%Y%m%d-%H%M%S"))
+    moved = 0
+    skipped = 0
+    for path in paths:
+        try:
+            relative = path.relative_to(user_data_dir)
+        except ValueError:
+            skipped += 1
+            continue
+        destination = backup_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(path), str(destination))
+            moved += 1
+        except OSError:
+            skipped += 1
+    if skipped:
+        return f"moved {moved} cache path(s) to {backup_root}; skipped {skipped} locked path(s)"
+    return f"moved {moved} cache path(s) to {backup_root}"
+
+
+def unique_backup_dir(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(2, 100):
+        candidate = path.with_name(f"{path.name}-{index}")
+        if not candidate.exists():
+            return candidate
+    return path.with_name(f"{path.name}-{os.getpid()}")
+
+
+def existing_vscode_webview_cache_paths(user_data_dir: Path) -> list[Path]:
+    cache_paths = [
+        user_data_dir / "Service Worker",
+        user_data_dir / "Code Cache",
+        user_data_dir / "Cache",
+        user_data_dir / "GPUCache",
+        user_data_dir / "DawnGraphiteCache",
+        user_data_dir / "DawnWebGPUCache",
+    ]
+    web_storage = user_data_dir / "WebStorage"
+    if web_storage.exists():
+        cache_paths.extend(sorted(web_storage.glob("*/CacheStorage")))
+    return [path for path in cache_paths if path.exists()]
+
+
 def patch_roocode_ripgrep_file(extension_js: Path, *, dry_run: bool) -> str:
     if not extension_js.exists():
         return "missing extension bundle"
@@ -687,20 +747,27 @@ def user_config_root() -> Path:
 
 
 def vscode_user_settings_path(code_flavor: str) -> Path:
+    return vscode_user_data_dir(code_flavor) / "User" / "settings.json"
+
+
+def vscode_user_data_dir(code_flavor: str) -> Path:
     system = platform.system().lower()
-    if code_flavor == "code-insiders":
-        app_name = "Code - Insiders"
-    elif code_flavor == "codium":
-        app_name = "VSCodium"
-    else:
-        app_name = "Code"
+    app_name = vscode_app_name(code_flavor)
 
     if system == "windows":
         root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        return root / app_name / "User" / "settings.json"
+        return root / app_name
     if system == "darwin":
-        return Path.home() / "Library" / "Application Support" / app_name / "User" / "settings.json"
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / app_name / "User" / "settings.json"
+        return Path.home() / "Library" / "Application Support" / app_name
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / app_name
+
+
+def vscode_app_name(code_flavor: str) -> str:
+    if code_flavor == "code-insiders":
+        return "Code - Insiders"
+    if code_flavor == "codium":
+        return "VSCodium"
+    return "Code"
 
 
 def kilo_config_path(home: Path) -> Path:

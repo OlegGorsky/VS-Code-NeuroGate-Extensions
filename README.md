@@ -22,6 +22,8 @@ The setup also patches RooCode's bundled compatibility gaps:
 - ripgrep lookup for newer VS Code builds that ship `@vscode/ripgrep-universal` instead of the older `@vscode/ripgrep` package. This prevents RooCode from failing before the first API request with `Could not find ripgrep binary`, which is common with immutable VS Code installs such as NixOS.
 - OpenAI native model registry, so RooCode accepts the NeuroGate default `gpt-5.5` instead of falling back to its bundled default model. Without this, RooCode can send `gpt-5.1-codex-max` and NeuroGate returns `Unknown model`.
 
+After patching RooCode, the setup moves VS Code webview/service-worker caches into `neurogate-webview-cache-backups/<timestamp>`. This clears stale webview state that can otherwise show `Could not register service worker` after extension bundle changes.
+
 ## Quick install
 
 Linux, NixOS, Ubuntu, WSL, macOS:
@@ -75,6 +77,7 @@ On Windows, the script also checks WSL and runs the same setup inside the defaul
 - Cline provider settings: `~/.cline/data/settings/providers.json`
 
 Existing files are backed up as `*.bak-YYYYmmdd-HHMMSS` before changes.
+VS Code webview caches are moved, not deleted, into `neurogate-webview-cache-backups/<timestamp>`.
 
 The API check calls both `/v1/models` and a minimal streaming `/v1/responses` request, so a bad key or unsupported wire protocol is caught during setup.
 
